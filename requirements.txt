@@ -1,0 +1,6 @@
+discord.py>=2.3.2
+langchain-openai>=0.2.0
+langgraph>=0.2.0
+python-dotenv>=1.0.1
+nbclient>=0.10.0
+nbformat>=5.10.0
