@@ -168,7 +168,7 @@ secret files or `.git` paths.
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
+New-Item -ItemType File .env
 ```
 
 Fill in `.env`:
