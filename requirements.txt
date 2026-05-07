@@ -1,8 +1,9 @@
 discord.py>=2.3.2
 langchain-core>=0.3.0
-langchain-openai>=0.2.0
+langchain-anthropic>=0.3.0
 langgraph>=0.2.0
 python-dotenv>=1.0.1
+anthropic>=0.40.0
 nbclient>=0.10.0
 nbformat>=5.10.0
 ipykernel>=6.29.0

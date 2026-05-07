@@ -11,9 +11,8 @@ load_dotenv()
 @dataclass(frozen=True)
 class Settings:
     discord_token: str
-    openai_api_key: str
-    openai_model: str = "gpt-4o-mini"
-    command_prefix: str = "!graphdev"
+    anthropic_api_key: str
+    claude_model: str = "claude-sonnet-4-6"
     workspace_root: Path = Path(r"F:\Upwork")
     app_data_dir: Path = Path(".graphdev")
     max_discord_message_length: int = 1900
@@ -21,16 +20,16 @@ class Settings:
 
 def load_settings(require_secrets: bool = True) -> Settings:
     discord_token = os.getenv("DISCORD_TOKEN", "").strip()
-    openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
+    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    claude_model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6").strip()
     workspace_root = Path(os.getenv("GRAPHDEV_WORKSPACE_ROOT", r"F:\Upwork")).resolve()
 
     if require_secrets:
         missing = []
         if not discord_token:
             missing.append("DISCORD_TOKEN")
-        if not openai_api_key:
-            missing.append("OPENAI_API_KEY")
+        if not anthropic_api_key:
+            missing.append("ANTHROPIC_API_KEY")
         if missing:
             names = ", ".join(missing)
             raise RuntimeError(f"Missing required environment variable(s): {names}")
@@ -39,7 +38,7 @@ def load_settings(require_secrets: bool = True) -> Settings:
 
     return Settings(
         discord_token=discord_token,
-        openai_api_key=openai_api_key,
-        openai_model=openai_model,
+        anthropic_api_key=anthropic_api_key,
+        claude_model=claude_model,
         workspace_root=workspace_root,
     )

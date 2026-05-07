@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import socket
+import time
 from pathlib import Path
 
 import aiohttp
@@ -36,13 +37,6 @@ def split_message(text: str, max_length: int = 1900) -> list[str]:
     return chunks
 
 
-def strip_command_prefix(content: str, settings: Settings) -> str:
-    content = content.strip()
-    if content.lower().startswith(settings.command_prefix):
-        return content[len(settings.command_prefix):].strip()
-    return content
-
-
 def strip_bot_mention(content: str, client: discord.Client) -> str:
     if not client.user:
         return content.strip()
@@ -52,16 +46,33 @@ def strip_bot_mention(content: str, client: discord.Client) -> str:
     return content.strip()
 
 
-def attachment_payloads(message: discord.Message) -> list[dict]:
-    return [
-        {
-            "filename": attachment.filename,
-            "url": attachment.url,
-            "content_type": attachment.content_type,
-            "size": attachment.size,
-        }
-        for attachment in message.attachments
-    ]
+async def download_attachments(message: discord.Message, settings: Settings) -> list[dict]:
+    """Download Discord attachments immediately so approvals don't hit expired CDN URLs (403)."""
+    if not message.attachments:
+        return []
+
+    upload_dir = settings.workspace_root / ".graphdev_uploads" / str(int(time.time()))
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    payloads = []
+    async with aiohttp.ClientSession() as session:
+        for attachment in message.attachments:
+            base = {
+                "filename": attachment.filename,
+                "url": attachment.url,
+                "content_type": attachment.content_type,
+                "size": attachment.size,
+            }
+            local_file = upload_dir / attachment.filename
+            try:
+                async with session.get(attachment.url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    if resp.status == 200:
+                        local_file.write_bytes(await resp.read())
+                        base["local_path"] = str(local_file)
+            except Exception:
+                pass  # Fall back to URL-only; bot will attempt re-download on approval
+            payloads.append(base)
+    return payloads
 
 
 async def send_long_message(channel: discord.abc.Messageable, text: str, settings: Settings) -> None:
@@ -78,7 +89,7 @@ def create_client(settings: Settings, agent: GraphDevAgent) -> discord.Client:
     async def on_ready() -> None:
         print(f"Logged in as {client.user}")
         print(f"Workspace root: {settings.workspace_root}")
-        print(f"Listening for '{settings.command_prefix}' or direct mentions.")
+        print("Responding to: DMs (all messages) and @mentions in channels.")
 
     @client.event
     async def on_message(message: discord.Message) -> None:
@@ -86,37 +97,42 @@ def create_client(settings: Settings, agent: GraphDevAgent) -> discord.Client:
             return
 
         raw_content = message.content.strip()
-        has_prefix = raw_content.lower().startswith(settings.command_prefix)
+        is_dm = isinstance(message.channel, discord.DMChannel)
         mentioned = client.user in message.mentions if client.user else False
-        is_approval = raw_content.upper() in {"YES", "NO"}
+        user_id_str = str(message.author.id)
+
+        should_respond = is_dm or mentioned
 
         if not raw_content and not message.attachments:
             return
-        if not has_prefix and not mentioned and not is_approval:
+        if not should_respond:
             return
 
+        # Strip the bot mention from the user text
         user_text = raw_content
-        if not is_approval:
-            user_text = strip_command_prefix(raw_content, settings)
-            if mentioned:
-                user_text = strip_bot_mention(user_text, client)
+        if mentioned and client.user:
+            user_text = strip_bot_mention(user_text, client).strip()
 
         if not user_text and message.attachments:
             user_text = "Save and inspect these attachments."
         elif not user_text:
-            await message.channel.send(f"Send a message after `{settings.command_prefix}` or mention me naturally.")
+            await message.channel.send("Hey! Send me a message and I'll help with files, code, analysis, notebooks, and more.")
             return
 
-        user_id = str(message.author.id)
         if message.author.id in processing_users:
-            await message.channel.send("I am still working on your previous request. Please wait until it finishes.")
+            await message.channel.send("I'm still working on your previous request. Please wait until it finishes.")
             return
 
         processing_users.add(message.author.id)
 
         try:
+            attachments = await download_attachments(message, settings)
+            # Persist downloaded attachment paths so follow-up turns can still reference the files
+            if attachments and any(a.get("local_path") for a in attachments):
+                from stores import update_user_memory
+                update_user_memory(user_id_str, recent_uploads=attachments)
             async with message.channel.typing():
-                response = await asyncio.to_thread(agent.invoke, user_id, user_text, attachment_payloads(message))
+                response = await asyncio.to_thread(agent.invoke, user_id_str, user_text, attachments)
             await send_long_message(message.channel, response, settings)
         except Exception as error:
             await message.channel.send(f"Something went wrong: `{error}`")
@@ -135,8 +151,8 @@ def check_runtime() -> None:
 def validate_secret_shapes(settings: Settings) -> None:
     if settings.discord_token.count(".") != 2:
         print("Warning: DISCORD_TOKEN does not look like a standard Discord bot token.")
-    if not settings.openai_api_key.startswith(("sk-", "sk-proj-")):
-        print("Warning: OPENAI_API_KEY does not look like a standard OpenAI API key.")
+    if not settings.anthropic_api_key.startswith("sk-ant-"):
+        print("Warning: ANTHROPIC_API_KEY does not look like a standard Anthropic API key (expected sk-ant-...).")
 
 
 def print_connection_help(error: Exception) -> None:
