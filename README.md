@@ -144,13 +144,13 @@ The main workflows available to users are:
 All runtime file operations are constrained to the configured workspace root:
 
 ```text
-F:\Upwork
+F:\Workspace
 ```
 
 You can override it with:
 
 ```env
-GRAPHDEV_WORKSPACE_ROOT=F:\Upwork
+GRAPHDEV_WORKSPACE_ROOT=F:\Workspace
 ```
 
 The bot queues approval before writing, modifying, deleting, installing
@@ -160,7 +160,7 @@ creating reports, editing Word documents, or rolling back backups. Reply `YES` t
 Existing files are backed up under:
 
 ```text
-F:\Upwork\.graphdev_backups
+F:\Workspace\.graphdev_backups
 ```
 
 Secret files such as `.env` are never printed, and the tools refuse to modify
@@ -181,7 +181,7 @@ Fill in `.env`:
 DISCORD_TOKEN=your_discord_bot_token_here
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o-mini
-GRAPHDEV_WORKSPACE_ROOT=F:\Upwork
+GRAPHDEV_WORKSPACE_ROOT=F:\Workspace
 ```
 
 Enable Message Content Intent in the Discord Developer Portal, then run:
