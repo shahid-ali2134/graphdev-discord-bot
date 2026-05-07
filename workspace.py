@@ -16,7 +16,8 @@ TEXT_SUFFIXES = {
     ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".scss", ".json",
     ".md", ".txt", ".yaml", ".yml", ".toml", ".ini", ".csv", ".sql", ".sh",
     ".ps1", ".bat", ".java", ".cs", ".cpp", ".c", ".h", ".rs", ".go", ".php",
-    ".rb", ".swift", ".kt", ".xml", ".ipynb",
+    ".rb", ".swift", ".kt", ".xml", ".ipynb", ".m", ".r", ".R", ".jl", ".dart",
+    ".vue", ".svelte", ".scala", ".lua", ".pl", ".erl", ".ex", ".exs", ".f90", ".f",
 }
 
 

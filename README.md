@@ -3,37 +3,39 @@
 GraphDev is a conversational Discord development assistant built with Python,
 LangGraph, LangChain, OpenAI, and discord.py. It lets Discord users inspect
 projects, create or edit files, save attachments, install dependencies, run
-Python scripts, execute notebooks, and recover from backups inside a constrained
-workspace.
+Python scripts, execute notebooks, analyze technical files, generate reports,
+edit Word documents, and recover from backups inside a constrained workspace.
 
 Example messages:
 
 ```text
 !graphdev open the landing page folder and add a blue button
-!graphdev inspect this project and explain how it is structured
+@GraphDev inspect this project and explain how it is structured
 !graphdev create a LangGraph workflow project for invoice triage
+@GraphDev summarize that HTML file here in chat
+!graphdev analyze this notebook and create a Word technical report
 !graphdev run that script again
-!graphdev save these attachments into the active project
 ```
 
 ## Project Structure
 
 ```text
 .
-├── main.py             Discord client, command parsing, runtime checks
-├── graph.py            LangGraph state machine and OpenAI tool-calling agent
-├── agent_tools.py      LangChain tools exposed to the agent
-├── workspace.py        Safe filesystem, backup, execution, and install helpers
-├── stores.py           Per-user memory and pending approval persistence
-├── config.py           Environment loading and runtime settings
-├── requirements.txt    Python dependencies
-└── README.md           Project documentation
+|-- main.py             Discord client, message handling, runtime checks
+|-- graph.py            LangGraph workflow, routing, approval, memory, LLM tool calls
+|-- agent_tools.py      Reusable LangChain tools exposed to the agent
+|-- document_tools.py   File analysis, report generation, DOCX writing/editing helpers
+|-- workspace.py        Workspace-safe filesystem, backup, execution, and install helpers
+|-- stores.py           Per-user memory and pending approval persistence
+|-- config.py           Environment loading and runtime settings
+|-- requirements.txt    Python dependencies
+`-- README.md           Project documentation
 ```
 
 The bot stores runtime state in a local `.graphdev` folder:
 
 - `.graphdev/memory.json` tracks each Discord user's active project, active
-  folder, recent paths, and compact conversation summary.
+  folder, recent paths, failed tasks, and compact conversation summary.
 - `.graphdev/pending_actions.json` tracks the one approval-gated action waiting
   for a user's `YES` or `NO` response.
 
@@ -134,6 +136,8 @@ The main workflows available to users are:
   the workspace after approval.
 - Recovery:
   `create_backup_tool` and `rollback_tool`.
+- Technical analysis and documents:
+  `analyze_file_tool`, `generate_technical_report_tool`, `write_docx_tool`, `modify_docx_tool`.
 
 ## Safety Model
 
@@ -150,8 +154,8 @@ GRAPHDEV_WORKSPACE_ROOT=F:\Upwork
 ```
 
 The bot queues approval before writing, modifying, deleting, installing
-dependencies, executing scripts, executing notebooks, saving attachments, or
-rolling back backups. Reply `YES` to approve or `NO` to cancel.
+dependencies, executing scripts, executing notebooks, saving attachments,
+creating reports, editing Word documents, or rolling back backups. Reply `YES` to approve or `NO` to cancel.
 
 Existing files are backed up under:
 
@@ -200,6 +204,60 @@ YES
 YES
 !graphdev run the main Python file
 YES
+@GraphDev summarize the last file here in chat
 ```
 
-You can also mention the bot instead of using the prefix.
+You can also mention the bot instead of using the prefix, or reply naturally to approval prompts.
+
+## Document Analysis And Report Generation
+
+GraphDev can analyze source files and technical documents inside the configured workspace.
+
+Supported analysis inputs include:
+
+- Source code files such as `.py`, `.js`, `.ts`, `.java`, `.cs`, `.go`, `.rs`, `.php`, and similar text-based languages
+- Web and config files such as `.html`, `.css`, `.json`, `.yaml`, `.toml`, and `.md`
+- LaTeX files such as `.tex` and `.bib`
+- PDF files using `pypdf`
+- Word documents using `python-docx`
+- PowerPoint files using `python-pptx`
+- Excel spreadsheets using `openpyxl`
+
+Useful prompts:
+
+```text
+!graphdev analyze this PDF and create a detailed technical report
+!graphdev create a technical report from project/main.py
+!graphdev analyze the LaTeX file and explain its sections, equations, tables, figures, and citations
+!graphdev read this Word document and summarize the technical structure
+@GraphDev summarize the HTML file in Testing GraphDev here in chat
+@GraphDev create a Word report from ETD_PreProcess_Final.ipynb with preprocessing, models, metrics, and figures
+```
+
+When the user asks for a summary here, in chat, or directly in Discord, GraphDev replies without creating a file. When the user explicitly asks to create, save, export, or write a report, GraphDev queues approval before writing the output file. Reports can be Markdown or real Word `.docx` files depending on the requested output path.
+
+## Word Document Editing
+
+GraphDev can create real `.docx` reports and modify existing `.docx` files while preserving existing document styles as much as possible. Generated Word files map Markdown-like headings and bullets into real Word document structure.
+
+Default Word report formatting:
+
+- Font: Times New Roman unless the prompt specifies another font
+- Title: 28 pt, black, centered
+- Normal text: 11 pt, black
+- Heading 1: 16 pt, bold, black
+- Heading 2: 14 pt, bold, black
+
+Supported DOCX edit modes:
+
+- Append content using an existing or requested paragraph style
+- Replace a paragraph containing specific marker text while preserving paragraph/run formatting where possible
+
+Useful prompts:
+
+```text
+!graphdev open report.docx and append a conclusion section using the same style as the document
+!graphdev replace the paragraph that starts with "Project Scope" with this updated scope text
+```
+
+All DOCX modifications require approval and create a backup before saving.

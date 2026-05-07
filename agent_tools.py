@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+import document_tools
 import workspace
 from config import Settings
 from stores import remember_path, set_pending_action, update_user_memory
@@ -23,6 +24,9 @@ RISKY_ACTIONS = {
     "run_notebook",
     "rollback",
     "save_attachment",
+    "generate_technical_report",
+    "modify_docx",
+    "write_docx",
 }
 
 
@@ -42,16 +46,17 @@ def _safe_approval_args(args: dict[str, Any]) -> dict[str, Any]:
     return safe
 
 
-def approval_message(action: str, args: dict[str, Any], reason: str) -> str:
-    return workspace.as_json(
-        {
-            "status": "approval_required",
-            "action": action,
-            "reason": reason,
-            "reply": "Reply YES to approve or NO to cancel.",
-            "arguments": _safe_approval_args(args),
-        }
-    )
+def approval_message(action: str, args: dict[str, Any], reason: str, approval_summary: str = "") -> str:
+    payload = {
+        "status": "approval_required",
+        "action": action,
+        "reason": reason,
+        "reply": "Reply YES to approve or NO to cancel.",
+        "arguments": _safe_approval_args(args),
+    }
+    if approval_summary:
+        payload["chat_summary"] = approval_summary
+    return workspace.as_json(payload)
 
 
 def queue_action(
@@ -61,6 +66,8 @@ def queue_action(
     reason: str,
     original_request: str = "",
     original_attachments: list[dict[str, Any]] | None = None,
+    continue_after_approval: bool = True,
+    approval_summary: str = "",
 ) -> str:
     set_pending_action(
         user_id,
@@ -70,11 +77,21 @@ def queue_action(
             "reason": reason,
             "original_request": original_request,
             "original_attachments": original_attachments or [],
-            "continue_after_approval": True,
+            "continue_after_approval": continue_after_approval,
         },
     )
-    return approval_message(action, args, reason)
+    return approval_message(action, args, reason, approval_summary=approval_summary)
 
+
+
+def _wants_chat_summary(text: str) -> bool:
+    lowered = text.lower()
+    chat_markers = [
+        "in this chat", "here in chat", "in chat", "write the summary here", "summary here",
+        "respond here", "reply here", "also provide", "also give", "overall summary",
+        "provide me a summary", "provide me an overall summary",
+    ]
+    return any(marker in lowered for marker in chat_markers)
 
 def execute_action(settings: Settings, user_id: str, action: str, args: dict[str, Any]) -> str:
     if action == "create_project":
@@ -111,6 +128,48 @@ def execute_action(settings: Settings, user_id: str, action: str, args: dict[str
         return workspace.as_json(workspace.restore_backup(settings, backup, destination))
     if action == "save_attachment":
         return workspace.as_json(save_attachment_impl(settings, user_id, args))
+    if action == "generate_technical_report":
+        source = workspace.resolve_workspace_path(settings, args["path"], base=args.get("base"))
+        report_content = document_tools.build_technical_report(settings, source, args.get("instructions", ""))
+        report_path = args.get("report_path")
+        if not report_path:
+            report_path = str(source.with_suffix(".technical_report.md"))
+        target = workspace.resolve_workspace_path(settings, report_path, base=args.get("base"))
+        if target.suffix.lower() == ".docx":
+            result = document_tools.write_docx_content(
+                settings,
+                target,
+                report_content,
+                overwrite=bool(args.get("overwrite", False)),
+                style_hint=args.get("instructions", ""),
+            )
+        else:
+            result = workspace.write_text_file(settings, target, report_content, bool(args.get("overwrite", False)))
+        remember_path(user_id, result["path"])
+        return workspace.as_json(result)
+    if action == "write_docx":
+        path = workspace.resolve_workspace_path(settings, args["path"], base=args.get("base"))
+        result = document_tools.write_docx_content(
+            settings,
+            path,
+            args.get("content", ""),
+            overwrite=bool(args.get("overwrite", False)),
+            style_hint=args.get("style_hint", ""),
+        )
+        remember_path(user_id, result["path"])
+        return workspace.as_json(result)
+    if action == "modify_docx":
+        path = workspace.resolve_workspace_path(settings, args["path"], base=args.get("base"))
+        result = document_tools.modify_docx(
+            settings,
+            path,
+            args.get("mode", "append"),
+            args.get("content", ""),
+            marker=args.get("marker", ""),
+            style_hint=args.get("style_hint", ""),
+        )
+        remember_path(user_id, result["path"])
+        return workspace.as_json(result)
     raise workspace.WorkspaceError(f"Unknown pending action: {action}")
 
 
@@ -188,6 +247,61 @@ def build_tools(
         target = workspace.resolve_workspace_path(settings, path, base or None)
         remember_path(user_id, workspace.relative(settings, target))
         return workspace.read_text_file(settings, target)
+    @tool
+    def analyze_file_tool(path: str, base: str = "", instructions: str = "", max_chars: int = 45000) -> str:
+        """Return a concise technical summary in chat for a source, notebook, PDF, DOCX, PPTX, spreadsheet, or text file. This does not write files and does not require approval."""
+        target = workspace.resolve_workspace_path(settings, path, base or None)
+        remember_path(user_id, workspace.relative(settings, target))
+        return document_tools.build_chat_summary(settings, target, instructions or original_request)
+
+    @tool
+    def generate_technical_report_tool(path: str, report_path: str = "", instructions: str = "", base: str = "", overwrite: bool = False) -> str:
+        """Queue a detailed technical report for a code, LaTeX, PDF, DOCX, notebook, or text file. Use .docx in report_path for a real Word file."""
+        target = workspace.resolve_workspace_path(settings, path, base or None)
+        resolved_report = workspace.resolve_workspace_path(settings, report_path, base or None) if report_path else None
+        approval_summary = ""
+        request_context = f"{original_request}\n{instructions}"
+        if _wants_chat_summary(request_context):
+            approval_summary = document_tools.build_chat_summary(settings, target, instructions or original_request)
+        args = {
+            "path": path,
+            "report_path": report_path or "",
+            "instructions": instructions,
+            "base": base or None,
+            "overwrite": overwrite or bool(resolved_report and resolved_report.exists()),
+        }
+        return queue_action(user_id, "generate_technical_report", args, "Generating a report writes a new file and requires approval.", original_request, attachments, continue_after_approval=False, approval_summary=approval_summary)
+
+    @tool
+    def write_docx_tool(path: str, content: str, base: str = "", overwrite: bool = False, style_hint: str = "") -> str:
+        """Queue creation of a real .docx Word file from Markdown-like content. Defaults to Times New Roman: title 28 centered, body 11, heading 1 16 bold, heading 2 14 bold, black text."""
+        target = workspace.resolve_workspace_path(settings, path, base or None)
+        if target.suffix.lower() != ".docx":
+            raise workspace.WorkspaceError("write_docx_tool only supports .docx files.")
+        args = {
+            "path": path,
+            "content": content,
+            "base": base or None,
+            "overwrite": overwrite,
+            "style_hint": style_hint,
+        }
+        return queue_action(user_id, "write_docx", args, "Creating a Word document writes a file and requires approval.", original_request, attachments, continue_after_approval=False)
+    @tool
+    def modify_docx_tool(path: str, mode: str, content: str, marker: str = "", style_hint: str = "", base: str = "") -> str:
+        """Queue style-aware DOCX modification. Use mode=append_markdown for Markdown headings/bullets, or replace_paragraph for marker replacement. Existing Word styles are reused where possible."""
+        target = workspace.resolve_workspace_path(settings, path, base or None)
+        if target.suffix.lower() != ".docx":
+            raise workspace.WorkspaceError("modify_docx_tool only supports .docx files. For Markdown-like content, use mode=append_markdown so headings and bullets map to Word styles.")
+        args = {
+            "path": path,
+            "mode": mode,
+            "content": content,
+            "marker": marker,
+            "style_hint": style_hint,
+            "base": base or None,
+        }
+        return queue_action(user_id, "modify_docx", args, "Modifying a Word document requires approval and creates a backup.", original_request, attachments, continue_after_approval=False)
+
 
     @tool
     def create_project_tool(name: str, files_json: str = "{}") -> str:
@@ -292,6 +406,10 @@ def build_tools(
         resolve_project_tool,
         scan_project_tool,
         read_file_tool,
+        analyze_file_tool,
+        generate_technical_report_tool,
+        write_docx_tool,
+        modify_docx_tool,
         create_project_tool,
         write_file_tool,
         modify_file_tool,
